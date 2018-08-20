@@ -18,15 +18,25 @@ type Hub struct {
 
 	// Unregister requests from clients.
 	unregister chan *Client
+
+    noClients chan uint32
+
+    key uint32
 }
 
-func newHub() *Hub {
+func newHub(key uint32, noClients chan uint32) *Hub {
 	return &Hub{
 		broadcast:  make(chan []byte),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 		clients:    make(map[*Client]bool),
+        noClients:  noClients,
+        key:        key,
 	}
+}
+
+func (h *Hub) count() int {
+    return len(h.clients)
 }
 
 func (h *Hub) run() {
@@ -49,5 +59,9 @@ func (h *Hub) run() {
 				}
 			}
 		}
+        if len(h.clients) == 0 {
+            h.noClients <- h.key
+            break
+        }
 	}
 }

@@ -8,24 +8,40 @@ import (
 	"flag"
 	"log"
 	"net/http"
+    "hash/fnv"
 )
 
 var addr = flag.String("addr", ":8080", "http service address")
 var static = flag.String("files", "static", "path for static files")
 
 
-var hubs = make(map[string]*Hub)
+var hubs = make(map[uint32]*Hub)
+var noClients = make(chan uint32)
+
+func hash(s string) uint32 {
+    h := fnv.New32a()
+    h.Write([]byte(s))
+    return h.Sum32()
+}
+
+func cleanup() {
+    for {
+        deadKey := <- noClients
+        delete(hubs, deadKey)
+    }
+}
 
 func main() {
 	flag.Parse()
     fs := http.FileServer(http.Dir(*static))
+    go cleanup()
     http.Handle("/", fs)
-
-	http.HandleFunc("/hub", func(w http.ResponseWriter, r *http.Request) {
-        hub, ok := hubs[r.URL.Path]
+	http.HandleFunc("/hub/", func(w http.ResponseWriter, r *http.Request) {
+        key := hash(r.URL.Path)
+        hub, ok := hubs[key]
         if !ok {
-            hub = newHub()
-            hubs[r.URL.Path] = hub
+            hub = newHub(key, noClients)
+            hubs[key] = hub
             go hub.run()
         }
 		serveWs(hub, w, r)
