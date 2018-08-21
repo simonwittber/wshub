@@ -39,12 +39,14 @@ func main() {
 	http.HandleFunc("/hub/", func(w http.ResponseWriter, r *http.Request) {
         key := hash(r.URL.Path)
         hub, ok := hubs[key]
+        isServer := false
         if !ok {
             hub = newHub(key, noClients)
             hubs[key] = hub
+            isServer = true
             go hub.run()
         }
-		serveWs(hub, w, r)
+		serveWs(hub, w, r, isServer)
 	})
 
 	err := http.ListenAndServe(*addr, nil)

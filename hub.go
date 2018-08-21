@@ -4,6 +4,11 @@
 
 package main
 
+type Envelope struct {
+    guid string
+    message []byte
+}
+
 // hub maintains the set of active clients and broadcasts messages to the
 // clients.
 type Hub struct {
@@ -11,7 +16,7 @@ type Hub struct {
 	clients map[*Client]bool
 
 	// Inbound messages from the clients.
-	broadcast chan []byte
+	broadcast chan Envelope
 
 	// Register requests from the clients.
 	register chan *Client
@@ -22,11 +27,13 @@ type Hub struct {
     noClients chan uint32
 
     key uint32
+
+    serverGuid string
 }
 
 func newHub(key uint32, noClients chan uint32) *Hub {
 	return &Hub{
-		broadcast:  make(chan []byte),
+		broadcast:  make(chan Envelope),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 		clients:    make(map[*Client]bool),
@@ -49,14 +56,16 @@ func (h *Hub) run() {
 				delete(h.clients, client)
 				close(client.send)
 			}
-		case message := <-h.broadcast:
+		case envelope := <-h.broadcast:
 			for client := range h.clients {
-				select {
-				case client.send <- message:
-				default:
-					close(client.send)
-					delete(h.clients, client)
-				}
+                if envelope.guid != client.guid {
+                    select {
+                    case client.send <- envelope:
+                    default:
+                        close(client.send)
+                        delete(h.clients, client)
+                    }
+                }
 			}
 		}
         if len(h.clients) == 0 {

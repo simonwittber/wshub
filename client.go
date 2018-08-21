@@ -10,18 +10,16 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+    "github.com/rs/xid"
 )
 
 const (
 	// Time allowed to write a message to the peer.
 	writeWait = 10 * time.Second
-
 	// Time allowed to read the next pong message from the peer.
 	pongWait = 60 * time.Second
-
 	// Send pings to peer with this period. Must be less than pongWait.
 	pingPeriod = (pongWait * 9) / 10
-
 	// Maximum message size allowed from peer.
 	maxMessageSize = 1024
 )
@@ -34,17 +32,18 @@ var (
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
+    CheckOrigin: func(request *http.Request) bool { return true },
 }
 
 // Client is a middleman between the websocket connection and the hub.
 type Client struct {
 	hub *Hub
-
 	// The websocket connection.
 	conn *websocket.Conn
-
 	// Buffered channel of outbound messages.
-	send chan []byte
+	send chan Envelope
+
+    guid string
 }
 
 // readPump pumps messages from the websocket connection to the hub.
@@ -68,8 +67,8 @@ func (c *Client) readPump() {
 			}
 			break
 		}
-		//message = bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
-		c.hub.broadcast <- message
+        envelope := Envelope{ guid: c.guid, message: message, }
+		c.hub.broadcast <- envelope
 	}
 }
 
@@ -86,7 +85,7 @@ func (c *Client) writePump() {
 	}()
 	for {
 		select {
-		case message, ok := <-c.send:
+		case envelope, ok := <-c.send:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
 				// The hub closed the channel.
@@ -98,7 +97,9 @@ func (c *Client) writePump() {
 			if err != nil {
 				return
 			}
-			w.Write(message)
+            w.Write([]byte(envelope.guid));
+            w.Write(newline)
+			w.Write(envelope.message)
 
 			if err := w.Close(); err != nil {
 				return
@@ -113,13 +114,18 @@ func (c *Client) writePump() {
 }
 
 // serveWs handles websocket requests from the peer.
-func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
+func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request, isServer bool) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println(err)
 		return
 	}
-	client := &Client{hub: hub, conn: conn, send: make(chan []byte, 256)}
+	client := &Client{hub: hub, conn: conn, send: make(chan Envelope, 256), guid: xid.New().String(), }
+    if isServer {
+        hub.serverGuid = client.guid
+    }
+    //first message a client received must be the client guid and the server guid.
+    client.send <- Envelope{ guid: client.guid, message: []byte(hub.serverGuid) }
 	client.hub.register <- client
 	go client.writePump()
 	client.readPump()
