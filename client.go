@@ -5,12 +5,14 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"log"
 	"net/http"
 	"time"
 
 	"github.com/gorilla/websocket"
-    "github.com/rs/xid"
+	"github.com/rs/xid"
 )
 
 const (
@@ -32,7 +34,7 @@ var (
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
-    CheckOrigin: func(request *http.Request) bool { return true },
+	CheckOrigin:     func(request *http.Request) bool { return true },
 }
 
 // Client is a middleman between the websocket connection and the hub.
@@ -43,7 +45,7 @@ type Client struct {
 	// Buffered channel of outbound messages.
 	send chan Envelope
 
-    guid string
+	GUID string
 }
 
 // readPump pumps messages from the websocket connection to the hub.
@@ -67,7 +69,16 @@ func (c *Client) readPump() {
 			}
 			break
 		}
-        envelope := Envelope{ guid: c.guid, message: message, }
+		reader := bufio.NewReader(bytes.NewReader(message))
+		dstGUID, err := reader.ReadString('\n')
+        dstGUID = dstGUID[0:len(dstGUID)-1]
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway) {
+				log.Printf("error: %v", err)
+			}
+			break
+		}
+		envelope := Envelope{srcGUID: c.GUID, dstGUID: dstGUID, message: message}
 		c.hub.broadcast <- envelope
 	}
 }
@@ -97,8 +108,8 @@ func (c *Client) writePump() {
 			if err != nil {
 				return
 			}
-            w.Write([]byte(envelope.guid));
-            w.Write(newline)
+			w.Write([]byte(envelope.srcGUID))
+			w.Write(newline)
 			w.Write(envelope.message)
 
 			if err := w.Close(); err != nil {
@@ -120,12 +131,12 @@ func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request, isServer bool) {
 		log.Println(err)
 		return
 	}
-	client := &Client{hub: hub, conn: conn, send: make(chan Envelope, 256), guid: xid.New().String(), }
-    if isServer {
-        hub.serverGuid = client.guid
-    }
-    //first message a client received must be the client guid and the server guid.
-    client.send <- Envelope{ guid: client.guid, message: []byte(hub.serverGuid) }
+	client := &Client{hub: hub, conn: conn, send: make(chan Envelope, 256), GUID: xid.New().String()}
+	if isServer {
+		hub.serverGUID = client.GUID
+	}
+	//first message a client received must be the client guid and the server guid.
+	client.send <- Envelope{srcGUID: client.GUID, message: []byte(hub.serverGUID)}
 	client.hub.register <- client
 	go client.writePump()
 	client.readPump()

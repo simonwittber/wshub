@@ -4,12 +4,17 @@
 
 package main
 
+// Envelope contains routing information for a message.
 type Envelope struct {
-    guid string
-    message []byte
+	// id of sending peer
+	srcGUID string
+	// id of target peer to receive message
+	dstGUID string
+	// message data
+	message []byte
 }
 
-// hub maintains the set of active clients and broadcasts messages to the
+// Hub maintains the set of active clients and broadcasts messages to the
 // clients.
 type Hub struct {
 	// Registered clients.
@@ -24,11 +29,11 @@ type Hub struct {
 	// Unregister requests from clients.
 	unregister chan *Client
 
-    noClients chan uint32
+	noClients chan uint32
 
-    key uint32
+	key uint32
 
-    serverGuid string
+	serverGUID string
 }
 
 func newHub(key uint32, noClients chan uint32) *Hub {
@@ -37,13 +42,13 @@ func newHub(key uint32, noClients chan uint32) *Hub {
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 		clients:    make(map[*Client]bool),
-        noClients:  noClients,
-        key:        key,
+		noClients:  noClients,
+		key:        key,
 	}
 }
 
 func (h *Hub) count() int {
-    return len(h.clients)
+	return len(h.clients)
 }
 
 func (h *Hub) run() {
@@ -58,19 +63,22 @@ func (h *Hub) run() {
 			}
 		case envelope := <-h.broadcast:
 			for client := range h.clients {
-                if envelope.guid != client.guid {
-                    select {
-                    case client.send <- envelope:
-                    default:
-                        close(client.send)
-                        delete(h.clients, client)
-                    }
+                if(envelope.srcGUID == client.GUID) {
+                    continue
                 }
+                if envelope.dstGUID == "ALL" || envelope.dstGUID == client.GUID {
+					select {
+					case client.send <- envelope:
+					default:
+						close(client.send)
+						delete(h.clients, client)
+					}
+				}
 			}
 		}
-        if len(h.clients) == 0 {
-            h.noClients <- h.key
-            break
-        }
+		if len(h.clients) == 0 {
+			h.noClients <- h.key
+			break
+		}
 	}
 }
